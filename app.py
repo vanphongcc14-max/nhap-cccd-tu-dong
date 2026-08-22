@@ -4,6 +4,7 @@ import cv2
 import os
 import zxingcpp
 from PIL import Image
+from pyzbar.pyzbar import decode as pyzbar_decode
 from docxtpl import DocxTemplate
 from io import BytesIO
 
@@ -15,7 +16,62 @@ for key in ["cccd", "name", "dob", "gender", "address", "issue_date"]:
     if key not in st.session_state:
         st.session_state[key] = ""
 
-# Chọn nguồn ảnh
+# Hàm giải mã tiếng Việt chuẩn từ chuỗi byte
+def decode_vietnamese(raw_bytes):
+    try:
+        return raw_bytes.decode('utf-8')
+    except Exception:
+        try:
+            return raw_bytes.decode('latin1').encode('raw_unicode_escape').decode('utf-8')
+        except Exception:
+            return raw_bytes.decode('utf-8', errors='ignore')
+
+# Hàm quét QR đa tầng (Thử nhiều thuật toán xử lý ảnh)
+def scan_qr_code(img_np):
+    # 1. Thử zxingcpp trên ảnh gốc
+    results = zxingcpp.read_barcodes(img_np)
+    if results:
+        return results[0].text
+
+    # 2. Thử pyzbar trên ảnh gốc
+    pyz_res = pyzbar_decode(img_np)
+    if pyz_res:
+        return decode_vietnamese(pyz_res[0].data)
+
+    # 3. Chuyển ảnh sang xám (Grayscale)
+    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+    
+    results = zxingcpp.read_barcodes(gray)
+    if results:
+        return results[0].text
+    
+    pyz_res = pyzbar_decode(gray)
+    if pyz_res:
+        return decode_vietnamese(pyz_res[0].data)
+
+    # 4. Phóng to ảnh x2 để tăng chi tiết QR
+    resized = cv2.resize(gray, (0, 0), fx=2, fy=2)
+    results = zxingcpp.read_barcodes(resized)
+    if results:
+        return results[0].text
+
+    pyz_res = pyzbar_decode(resized)
+    if pyz_res:
+        return decode_vietnamese(pyz_res[0].data)
+
+    # 5. Tăng độ tương phản (Thresholding)
+    _, thresh = cv2.threshold(gray, 120, 255, cv2.THRESH_BINARY)
+    results = zxingcpp.read_barcodes(thresh)
+    if results:
+        return results[0].text
+
+    pyz_res = pyzbar_decode(thresh)
+    if pyz_res:
+        return decode_vietnamese(pyz_res[0].data)
+
+    return None
+
+# Chọn phương thức nhập ảnh
 source_choice = st.radio("Chọn phương thức nhập ảnh:", ["Tải ảnh từ máy", "Chụp ảnh trực tiếp"], horizontal=True)
 
 img_file = None
@@ -28,12 +84,10 @@ if img_file is not None:
     image = Image.open(img_file)
     img_array = np.array(image)
 
-    # Đọc QR bằng zxingcpp (Tự động đọc đúng tiếng Việt UTF-8)
-    results = zxingcpp.read_barcodes(img_array)
-    
-    if results:
-        qr_text = results[0].text  # Lấy chuỗi tiếng Việt đã được giải mã chuẩn 100%
+    # Quét QR bằng hàm xử lý đa tầng
+    qr_text = scan_qr_code(img_array)
 
+    if qr_text:
         fields = qr_text.split("|")
         
         if len(fields) >= 6:
@@ -54,7 +108,7 @@ if img_file is not None:
         else:
             st.warning("Đã quét thấy mã QR nhưng cấu trúc dữ liệu không đúng chuẩn CCCD.")
     else:
-        st.error("Không tìm thấy mã QR trên ảnh. Vui lòng căn chụp rõ nét hơn.")
+        st.error("Không tìm thấy mã QR trên ảnh. Vui lòng căn chụp rõ nét mã QR ở góc trên bên phải CCCD.")
 
 # Form hiển thị và chỉnh sửa thông tin
 st.subheader("Thông tin chi tiết")
