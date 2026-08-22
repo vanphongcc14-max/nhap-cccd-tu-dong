@@ -1,7 +1,5 @@
 import streamlit as st
-import cv2
 import numpy as np
-import os
 from PIL import Image
 from pyzbar.pyzbar import decode
 from docx import Document
@@ -10,24 +8,23 @@ from io import BytesIO
 st.set_page_config(page_title="Tạo Sơ Yếu Lý Lịch từ CCCD", layout="centered")
 st.title("Trích xuất CCCD & Xuất Sơ Yếu Lý Lịch")
 
-# 1. Khởi tạo session state để lưu trữ dữ liệu
+# Khởi tạo session state
 for key in ["cccd", "name", "dob", "gender", "address", "issue_date"]:
     if key not in st.session_state:
         st.session_state[key] = ""
 
-# 2. Hàm giải mã chuỗi CCCD tránh lỗi font tiếng Việt / ký tự lạ
+# Hàm giải mã chuỗi CCCD tránh lỗi font chữ
 def parse_cccd_raw(raw_bytes):
     try:
-        # Giải mã chuyển đổi từ latin1 -> utf-8 để hiển thị chuẩn tiếng Việt
-        text = raw_bytes.decode("latin1").encode("latin1").decode("utf-8")
-    except Exception:
+        text = raw_bytes.decode("utf-8")
+    except UnicodeDecodeError:
         try:
-            text = raw_bytes.decode("utf-8", errors="ignore")
+            text = raw_bytes.decode("latin1").encode("latin1").decode("utf-8", errors="ignore")
         except Exception:
-            text = str(raw_bytes)
+            text = raw_bytes.decode("utf-8", errors="ignore")
     return text
 
-# 3. Tùy chọn nguồn ảnh
+# Chọn nguồn ảnh
 source_choice = st.radio("Chọn phương thức nhập ảnh:", ["Tải ảnh từ máy", "Chụp ảnh trực tiếp"], horizontal=True)
 
 img_file = None
@@ -40,27 +37,27 @@ if img_file is not None:
     image = Image.open(img_file)
     img_array = np.array(image)
 
-    # Đọc mã QR từ ảnh
+    # Đọc mã QR
     decoded_objects = decode(img_array)
     if decoded_objects:
         raw_data = decoded_objects[0].data
         qr_text = parse_cccd_raw(raw_data)
 
-        # Tách dữ liệu mã QR CCCD qua dấu phân cách |
+        # Tách dữ liệu qua dấu |
         fields = qr_text.split("|")
         
         if len(fields) >= 6:
             st.session_state["cccd"] = fields[0].strip()
             st.session_state["name"] = fields[2].strip()
             
-            # Định dạng Ngày sinh (DDMMYYYY -> DD/MM/YYYY)
+            # Xử lý Ngày sinh (DDMMYYYY)
             dob_raw = fields[3].strip()
             st.session_state["dob"] = f"{dob_raw[:2]}/{dob_raw[2:4]}/{dob_raw[4:]}" if len(dob_raw) == 8 else dob_raw
             
             st.session_state["gender"] = fields[4].strip()
             st.session_state["address"] = fields[5].strip()
             
-            # Định dạng Ngày cấp CCCD (DDMMYYYY -> DD/MM/YYYY) nếu có
+            # Xử lý Ngày cấp (DDMMYYYY)
             if len(fields) >= 7:
                 issue_raw = fields[6].strip()
                 st.session_state["issue_date"] = f"{issue_raw[:2]}/{issue_raw[2:4]}/{issue_raw[4:]}" if len(issue_raw) == 8 else issue_raw
@@ -71,8 +68,8 @@ if img_file is not None:
     else:
         st.error("Không tìm thấy mã QR trên ảnh. Vui lòng căn chụp rõ nét hơn.")
 
-# 4. Form hiển thị và cho phép chỉnh sửa thông tin
-st.subheader("Kiểm tra & Bổ sung thông tin")
+# Form hiển thị và chỉnh sửa thông tin
+st.subheader("Thông tin chi tiết")
 with st.form("cccd_form"):
     cccd = st.text_input("Số CCCD", value=st.session_state["cccd"])
     name = st.text_input("Họ và tên", value=st.session_state["name"])
@@ -88,61 +85,37 @@ with st.form("cccd_form"):
     
     st.form_submit_button("Cập nhật lại form")
 
-# 5. Hàm điền thông tin vào file mẫu Word
-def fill_template(template_path, replacements):
-    doc = Document(template_path)
+# Hàm tạo trực tiếp file Word .docx chuẩn
+def create_docx(data):
+    doc = Document()
+    doc.add_heading("CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM", level=2)
+    doc.add_paragraph("Độc lập - Tự do - Hạnh phúc").alignment = 1
+    doc.add_heading("SƠ YẾU LÝ LỊCH", level=1)
     
-    def replace_text_in_paragraph(p):
-        for key, val in replacements.items():
-            if key in p.text:
-                for run in p.runs:
-                    if key in run.text:
-                        run.text = run.text.replace(key, str(val))
-                if key in p.text:
-                    p.text = p.text.replace(key, str(val))
-
-    # Thay thế trong đoạn văn
-    for p in doc.paragraphs:
-        replace_text_in_paragraph(p)
-        
-    # Thay thế trong bảng (tables)
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for p in cell.paragraphs:
-                    replace_text_in_paragraph(p)
-
+    doc.add_paragraph(f"Họ và tên: {data['name']}")
+    doc.add_paragraph(f"Ngày, tháng, năm sinh: {data['dob']}")
+    doc.add_paragraph(f"Giới tính: {data['gender']}")
+    doc.add_paragraph(f"Căn cước công dân số: {data['cccd']}")
+    doc.add_paragraph(f"Cấp ngày: {data['issue_date']}, tại Cục Cảnh sát quản lý hành chính về trật tự xã hội")
+    doc.add_paragraph(f"Thường trú: {data['address']}")
+    
     bio = BytesIO()
     doc.save(bio)
     bio.seek(0)
     return bio
 
-replacements = {
-    "{{ HO_TEN }}": name,
-    "{{ SO_CCCD }}": cccd,
-    "{{ NGAY_SINH }}": dob,
-    "{{ GIOI_TINH }}": gender,
-    "{{ DIA_CHI }}": address,
-    "{{ NGAY_CAP }}": issue_date
+user_data = {
+    "cccd": cccd,
+    "name": name,
+    "dob": dob,
+    "gender": gender,
+    "address": address,
+    "issue_date": issue_date
 }
 
-# 6. Tự động tìm tệp mẫu và xuất file Word
-template_name = None
-for file in os.listdir("."):
-    if file.startswith("mau_so_yeu_ly_lich"):
-        template_name = file
-        break
-
-if template_name:
-    try:
-        docx_file = fill_template(template_name, replacements)
-        st.download_button(
-            label="🚀 Xuất file Sơ Yếu Lý Lịch (.docx)",
-            data=docx_file,
-            file_name=f"So_Yeu_Ly_Lich_{cccd if cccd else 'CCCD'}.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
-    except Exception as e:
-        st.error(f"Lỗi khi xử lý file mẫu: {e}")
-else:
-    st.error("Không tìm thấy tệp mẫu `mau_so_yeu_ly_lich` trong thư mục GitHub. Vui lòng kiểm tra lại!")
+st.download_button(
+    label="🚀 Xuất file Sơ Yếu Lý Lịch (.docx)",
+    data=create_docx(user_data),
+    file_name=f"So_Yeu_Ly_Lich_{cccd if cccd else 'CCCD'}.docx",
+    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
