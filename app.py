@@ -1,20 +1,21 @@
 import streamlit as st
 import numpy as np
 import cv2
+import os
 from PIL import Image
 from pyzbar.pyzbar import decode
-from docx import Document
+from docxtpl import DocxTemplate
 from io import BytesIO
 
 st.set_page_config(page_title="Tạo Sơ Yếu Lý Lịch từ CCCD", layout="centered")
-st.title("Trích xuất CCCD & Xuất Sơ Yếu Lý Lịch")
+st.title("Trích xuất CCCD & Xuất Sơ Yếu Lý Lịch theo mẫu")
 
 # Khởi tạo session state
 for key in ["cccd", "name", "dob", "gender", "address", "issue_date"]:
     if key not in st.session_state:
         st.session_state[key] = ""
 
-# Hàm giải mã chuỗi CCCD tránh lỗi font chữ
+# Hàm giải mã chuỗi CCCD
 def parse_cccd_raw(raw_bytes):
     try:
         text = raw_bytes.decode("utf-8")
@@ -25,26 +26,22 @@ def parse_cccd_raw(raw_bytes):
             text = raw_bytes.decode("utf-8", errors="ignore")
     return text
 
-# Hàm hỗ trợ xử lý ảnh để quét QR tốt hơn
+# Hàm hỗ trợ xử lý ảnh để quét QR
 def scan_qr_advanced(img_array):
-    # 1. Thử đọc ảnh gốc
     decoded = decode(img_array)
     if decoded:
         return decoded
     
-    # 2. Chuyển sang ảnh xám (Grayscale)
     gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
     decoded = decode(gray)
     if decoded:
         return decoded
         
-    # 3. Tăng độ tương phản (Thresholding)
     _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
     decoded = decode(thresh)
     if decoded:
         return decoded
 
-    # 4. Phóng to ảnh (nếu mã QR quá nhỏ)
     resized = cv2.resize(gray, (0, 0), fx=2, fy=2)
     decoded = decode(resized)
     return decoded
@@ -62,27 +59,23 @@ if img_file is not None:
     image = Image.open(img_file)
     img_array = np.array(image)
 
-    # Đọc mã QR với hàm xử lý nâng cao
     decoded_objects = scan_qr_advanced(img_array)
     if decoded_objects:
         raw_data = decoded_objects[0].data
         qr_text = parse_cccd_raw(raw_data)
 
-        # Tách dữ liệu qua dấu |
         fields = qr_text.split("|")
         
         if len(fields) >= 6:
             st.session_state["cccd"] = fields[0].strip()
             st.session_state["name"] = fields[2].strip()
             
-            # Xử lý Ngày sinh (DDMMYYYY)
             dob_raw = fields[3].strip()
             st.session_state["dob"] = f"{dob_raw[:2]}/{dob_raw[2:4]}/{dob_raw[4:]}" if len(dob_raw) == 8 else dob_raw
             
             st.session_state["gender"] = fields[4].strip()
             st.session_state["address"] = fields[5].strip()
             
-            # Xử lý Ngày cấp (DDMMYYYY)
             if len(fields) >= 7:
                 issue_raw = fields[6].strip()
                 st.session_state["issue_date"] = f"{issue_raw[:2]}/{issue_raw[2:4]}/{issue_raw[4:]}" if len(issue_raw) == 8 else issue_raw
@@ -91,7 +84,7 @@ if img_file is not None:
         else:
             st.warning("Đã quét thấy mã QR nhưng cấu trúc dữ liệu không đúng chuẩn CCCD.")
     else:
-        st.error("Không tìm thấy mã QR trên ảnh. Vui lòng di chuyển camera lại gần mã QR ở góc trên bên phải CCCD hoặc tải ảnh rõ nét hơn.")
+        st.error("Không tìm thấy mã QR trên ảnh. Vui lòng căn chụp lại gần mã QR ở góc trên bên phải CCCD.")
 
 # Form hiển thị và chỉnh sửa thông tin
 st.subheader("Thông tin chi tiết")
@@ -110,37 +103,31 @@ with st.form("cccd_form"):
     
     st.form_submit_button("Cập nhật lại form")
 
-# Hàm tạo trực tiếp file Word .docx chuẩn
-def create_docx(data):
-    doc = Document()
-    doc.add_heading("CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM", level=2)
-    doc.add_paragraph("Độc lập - Tự do - Hạnh phúc").alignment = 1
-    doc.add_heading("SƠ YẾU LÝ LỊCH", level=1)
-    
-    doc.add_paragraph(f"Họ và tên: {data['name']}")
-    doc.add_paragraph(f"Ngày, tháng, năm sinh: {data['dob']}")
-    doc.add_paragraph(f"Giới tính: {data['gender']}")
-    doc.add_paragraph(f"Căn cước công dân số: {data['cccd']}")
-    doc.add_paragraph(f"Cấp ngày: {data['issue_date']}, tại Cục Cảnh sát quản lý hành chính về trật tự xã hội")
-    doc.add_paragraph(f"Thường trú: {data['address']}")
+# Điền dữ liệu vào mẫu Word
+template_path = "mau_so_yeu_ly_lich.docx"
+
+if not os.path.exists(template_path):
+    st.error(f"⚠️ Không tìm thấy file mẫu `{template_path}` trên GitHub. Vui lòng tải file mẫu lên!")
+else:
+    context = {
+        "HO_TEN": name,
+        "SO_CCCD": cccd,
+        "NGAY_SINH": dob,
+        "GIOI_TINH": gender,
+        "DIA_CHI": address,
+        "NGAY_CAP": issue_date
+    }
+
+    doc = DocxTemplate(template_path)
+    doc.render(context)
     
     bio = BytesIO()
     doc.save(bio)
     bio.seek(0)
-    return bio
 
-user_data = {
-    "cccd": cccd,
-    "name": name,
-    "dob": dob,
-    "gender": gender,
-    "address": address,
-    "issue_date": issue_date
-}
-
-st.download_button(
-    label="🚀 Xuất file Sơ Yếu Lý Lịch (.docx)",
-    data=create_docx(user_data),
-    file_name=f"So_Yeu_Ly_Lich_{cccd if cccd else 'CCCD'}.docx",
-    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-)
+    st.download_button(
+        label="🚀 Xuất file Sơ Yếu Lý Lịch (theo mẫu .docx)",
+        data=bio,
+        file_name=f"So_Yeu_Ly_Lich_{cccd if cccd else 'CCCD'}.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
