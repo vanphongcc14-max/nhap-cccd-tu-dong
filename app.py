@@ -8,25 +8,25 @@ from docxtpl import DocxTemplate
 from io import BytesIO
 
 st.set_page_config(page_title="Tạo Sơ Yếu Lý Lịch từ CCCD", layout="centered")
-st.title("Trích xuất CCCD & Xuất Sơ Yếu Lý Lịch theo mẫu")
+st.title("Trích xuất CCCD & Xuất Sơ Yếu Lý Lịch")
 
 # Khởi tạo session state
 for key in ["cccd", "name", "dob", "gender", "address", "issue_date"]:
     if key not in st.session_state:
         st.session_state[key] = ""
 
-# Hàm giải mã chuỗi CCCD
-def parse_cccd_raw(raw_bytes):
+# Hàm giải mã chuẩn Tiếng Việt 100% cho QR CCCD
+def parse_cccd_vietnamese(raw_bytes):
     try:
-        text = raw_bytes.decode("utf-8")
-    except UnicodeDecodeError:
+        # Giải mã chuỗi unicode escape tiếng Việt từ pyzbar
+        return raw_bytes.decode('latin1').encode('raw_unicode_escape').decode('utf-8')
+    except Exception:
         try:
-            text = raw_bytes.decode("latin1").encode("latin1").decode("utf-8", errors="ignore")
+            return raw_bytes.decode('utf-8')
         except Exception:
-            text = raw_bytes.decode("utf-8", errors="ignore")
-    return text
+            return raw_bytes.decode('utf-8', errors='ignore')
 
-# Hàm hỗ trợ xử lý ảnh để quét QR
+# Hàm xử lý ảnh tăng độ chính xác
 def scan_qr_advanced(img_array):
     decoded = decode(img_array)
     if decoded:
@@ -43,8 +43,7 @@ def scan_qr_advanced(img_array):
         return decoded
 
     resized = cv2.resize(gray, (0, 0), fx=2, fy=2)
-    decoded = decode(resized)
-    return decoded
+    return decode(resized)
 
 # Chọn nguồn ảnh
 source_choice = st.radio("Chọn phương thức nhập ảnh:", ["Tải ảnh từ máy", "Chụp ảnh trực tiếp"], horizontal=True)
@@ -62,7 +61,7 @@ if img_file is not None:
     decoded_objects = scan_qr_advanced(img_array)
     if decoded_objects:
         raw_data = decoded_objects[0].data
-        qr_text = parse_cccd_raw(raw_data)
+        qr_text = parse_cccd_vietnamese(raw_data)
 
         fields = qr_text.split("|")
         
@@ -84,7 +83,7 @@ if img_file is not None:
         else:
             st.warning("Đã quét thấy mã QR nhưng cấu trúc dữ liệu không đúng chuẩn CCCD.")
     else:
-        st.error("Không tìm thấy mã QR trên ảnh. Vui lòng căn chụp lại gần mã QR ở góc trên bên phải CCCD.")
+        st.error("Không tìm thấy mã QR trên ảnh. Vui lòng căn chụp rõ nét hơn.")
 
 # Form hiển thị và chỉnh sửa thông tin
 st.subheader("Thông tin chi tiết")
@@ -103,11 +102,11 @@ with st.form("cccd_form"):
     
     st.form_submit_button("Cập nhật lại form")
 
-# Điền dữ liệu vào mẫu Word
+# Xuất file Word mẫu
 template_path = "mau_so_yeu_ly_lich.docx"
 
 if not os.path.exists(template_path):
-    st.error(f"⚠️ Không tìm thấy file mẫu `{template_path}` trên GitHub. Vui lòng tải file mẫu lên!")
+    st.error(f"⚠️ Không tìm thấy file mẫu `{template_path}` trên GitHub.")
 else:
     context = {
         "HO_TEN": name,
@@ -126,7 +125,7 @@ else:
     bio.seek(0)
 
     st.download_button(
-        label="🚀 Xuất file Sơ Yếu Lý Lịch (theo mẫu .docx)",
+        label="🚀 Xuất file Sơ Yếu Lý Lịch (.docx)",
         data=bio,
         file_name=f"So_Yeu_Ly_Lich_{cccd if cccd else 'CCCD'}.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
