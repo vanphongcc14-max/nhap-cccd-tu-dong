@@ -1,6 +1,6 @@
 streamlit
 opencv-python-headless
-pyzbar
+zxing-cpp
 python-docx
 docxtpl
 pillow
