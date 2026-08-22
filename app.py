@@ -1,5 +1,6 @@
 import streamlit as st
 import numpy as np
+import cv2
 from PIL import Image
 from pyzbar.pyzbar import decode
 from docx import Document
@@ -24,6 +25,30 @@ def parse_cccd_raw(raw_bytes):
             text = raw_bytes.decode("utf-8", errors="ignore")
     return text
 
+# Hàm hỗ trợ xử lý ảnh để quét QR tốt hơn
+def scan_qr_advanced(img_array):
+    # 1. Thử đọc ảnh gốc
+    decoded = decode(img_array)
+    if decoded:
+        return decoded
+    
+    # 2. Chuyển sang ảnh xám (Grayscale)
+    gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+    decoded = decode(gray)
+    if decoded:
+        return decoded
+        
+    # 3. Tăng độ tương phản (Thresholding)
+    _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
+    decoded = decode(thresh)
+    if decoded:
+        return decoded
+
+    # 4. Phóng to ảnh (nếu mã QR quá nhỏ)
+    resized = cv2.resize(gray, (0, 0), fx=2, fy=2)
+    decoded = decode(resized)
+    return decoded
+
 # Chọn nguồn ảnh
 source_choice = st.radio("Chọn phương thức nhập ảnh:", ["Tải ảnh từ máy", "Chụp ảnh trực tiếp"], horizontal=True)
 
@@ -37,8 +62,8 @@ if img_file is not None:
     image = Image.open(img_file)
     img_array = np.array(image)
 
-    # Đọc mã QR
-    decoded_objects = decode(img_array)
+    # Đọc mã QR với hàm xử lý nâng cao
+    decoded_objects = scan_qr_advanced(img_array)
     if decoded_objects:
         raw_data = decoded_objects[0].data
         qr_text = parse_cccd_raw(raw_data)
@@ -66,7 +91,7 @@ if img_file is not None:
         else:
             st.warning("Đã quét thấy mã QR nhưng cấu trúc dữ liệu không đúng chuẩn CCCD.")
     else:
-        st.error("Không tìm thấy mã QR trên ảnh. Vui lòng căn chụp rõ nét hơn.")
+        st.error("Không tìm thấy mã QR trên ảnh. Vui lòng di chuyển camera lại gần mã QR ở góc trên bên phải CCCD hoặc tải ảnh rõ nét hơn.")
 
 # Form hiển thị và chỉnh sửa thông tin
 st.subheader("Thông tin chi tiết")
