@@ -2,8 +2,8 @@ import streamlit as st
 import numpy as np
 import cv2
 import os
+import zxingcpp
 from PIL import Image
-from pyzbar.pyzbar import decode
 from docxtpl import DocxTemplate
 from io import BytesIO
 
@@ -14,36 +14,6 @@ st.title("Trích xuất CCCD & Xuất Sơ Yếu Lý Lịch")
 for key in ["cccd", "name", "dob", "gender", "address", "issue_date"]:
     if key not in st.session_state:
         st.session_state[key] = ""
-
-# Hàm giải mã chuẩn Tiếng Việt 100% cho QR CCCD
-def parse_cccd_vietnamese(raw_bytes):
-    try:
-        # Giải mã chuỗi unicode escape tiếng Việt từ pyzbar
-        return raw_bytes.decode('latin1').encode('raw_unicode_escape').decode('utf-8')
-    except Exception:
-        try:
-            return raw_bytes.decode('utf-8')
-        except Exception:
-            return raw_bytes.decode('utf-8', errors='ignore')
-
-# Hàm xử lý ảnh tăng độ chính xác
-def scan_qr_advanced(img_array):
-    decoded = decode(img_array)
-    if decoded:
-        return decoded
-    
-    gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-    decoded = decode(gray)
-    if decoded:
-        return decoded
-        
-    _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
-    decoded = decode(thresh)
-    if decoded:
-        return decoded
-
-    resized = cv2.resize(gray, (0, 0), fx=2, fy=2)
-    return decode(resized)
 
 # Chọn nguồn ảnh
 source_choice = st.radio("Chọn phương thức nhập ảnh:", ["Tải ảnh từ máy", "Chụp ảnh trực tiếp"], horizontal=True)
@@ -58,10 +28,11 @@ if img_file is not None:
     image = Image.open(img_file)
     img_array = np.array(image)
 
-    decoded_objects = scan_qr_advanced(img_array)
-    if decoded_objects:
-        raw_data = decoded_objects[0].data
-        qr_text = parse_cccd_vietnamese(raw_data)
+    # Đọc QR bằng zxingcpp (Tự động đọc đúng tiếng Việt UTF-8)
+    results = zxingcpp.read_barcodes(img_array)
+    
+    if results:
+        qr_text = results[0].text  # Lấy chuỗi tiếng Việt đã được giải mã chuẩn 100%
 
         fields = qr_text.split("|")
         
