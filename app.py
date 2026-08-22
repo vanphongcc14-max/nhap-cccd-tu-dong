@@ -2,56 +2,49 @@ import streamlit as st
 import cv2
 import numpy as np
 from pyzbar.pyzbar import decode
-from docxtpl import DocxTemplate
+from docx import Document
 import io
 
-st.set_page_config(page_title="Chuyển Đổi QR CCCD Sang Sơ Yếu Lý Lịch", layout="wide")
+st.set_page_config(page_title="Nhập CCCD Tự Động", page_icon="📜", layout="centered")
 
-st.title("📇 Chuyển Đổi QR CCCD Sang Sơ Yếu Lý Lịch")
+st.title("📜 Quét CCCD & Xuất Sơ Yếu Lý Lịch")
+st.write("Đưa mã QR trên CCCD vào camera hoặc chụp ảnh để tự động điền thông tin.")
 
-st.subheader("Bước 1: Tải ảnh CCCD (Mặt trước có chứa mã QR)")
+# Khởi tạo dữ liệu
+extracted_data = {
+    'SO_CCCD': '',
+    'HO_TEN': '',
+    'NGAY_SINH': '',
+    'GIOI_TINH': '',
+    'DIA_CHI': '',
+    'NGAY_CAP': ''
+}
 
-# Chọn tệp ảnh đã chụp sẵn từ thiết bị
-uploaded_file = st.file_uploader("Chọn tệp ảnh CCCD (JPG, PNG, JPEG)...", type=["jpg", "png", "jpeg"])
+# Chụp ảnh từ camera
+img_file_buffer = st.camera_input("Chụp ảnh mặt trước CCCD (chứa mã QR)")
 
-extracted_data = {}
+if img_file_buffer is not None:
+    bytes_data = img_file_buffer.getvalue()
+    cv2_img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
 
-if uploaded_file is not None:
-    # Đọc dữ liệu ảnh
-    file_bytes = np.frombuffer(uploaded_file.read(), np.uint8)
-    image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-
-    # Hiển thị ảnh đã tải lên
-    st.image(image, caption="Ảnh CCCD đã tải lên", width=350)
-
-    # --- THUẬT TOÁN XỬ LÝ MÃ QR ---
-    # 1. Thử giải mã trực tiếp trên ảnh gốc
-    barcodes = decode(image)
-
-    # 2. Nếu chưa đọc được, chuyển sang ảnh xám để tăng khả năng nhận diện
+    # Giải mã QR
+    barcodes = decode(cv2_img)
     if not barcodes:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(cv2_img, cv2.COLOR_BGR2GRAY)
         barcodes = decode(gray)
-
-    # 3. Nếu vẫn chưa đọc được, tăng độ tương phản (Thresholding)
-    if not barcodes:
-        _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
-        barcodes = decode(thresh)
 
     if barcodes:
         try:
-            # Lấy chuỗi dữ liệu mã QR (định dạng UTF-8)
-            try:
-                data_string = barcodes[0].data.decode('shift-jis').encode('sjis').decode('utf-8')
-            except:
-                data_string = barcodes[0].data.decode('utf-8', errors='ignore')
+            # Giải mã chuẩn tiếng Việt cho CCCD Việt Nam
+            raw_bytes = barcodes[0].data
+            data_string = raw_bytes.decode('latin1').encode('latin1').decode('utf-8', errors='ignore')
+
             parts = data_string.split('|')
 
             if len(parts) >= 6:
                 extracted_data['SO_CCCD'] = parts[0].strip()
                 extracted_data['HO_TEN'] = parts[2].strip()
 
-                # Định dạng ngày sinh (DDMMYYYY -> DD/MM/YYYY)
                 dob_raw = parts[3].strip()
                 if len(dob_raw) == 8:
                     extracted_data['NGAY_SINH'] = f"{dob_raw[:2]}/{dob_raw[2:4]}/{dob_raw[4:]}"
@@ -61,72 +54,67 @@ if uploaded_file is not None:
                 extracted_data['GIOI_TINH'] = parts[4].strip()
                 extracted_data['DIA_CHI'] = parts[5].strip()
 
-                # Định dạng ngày cấp nếu có trong mã QR (phần tử thứ 7)
-                if len(parts) >= 7:
-                    issue_raw = parts[6].strip()
-                    if len(issue_raw) == 8:
-                        extracted_data['NGAY_CAP'] = f"{issue_raw[:2]}/{issue_raw[2:4]}/{issue_raw[4:]}"
-                    else:
-                        extracted_data['NGAY_CAP'] = issue_raw
+            if len(parts) >= 7:
+                issue_raw = parts[6].strip()
+                if len(issue_raw) == 8:
+                    extracted_data['NGAY_CAP'] = f"{issue_raw[:2]}/{issue_raw[2:4]}/{issue_raw[4:]}"
                 else:
-                    extracted_data['NGAY_CAP'] = ""
+                    extracted_data['NGAY_CAP'] = issue_raw
 
-                st.success("🎉 Đã quét và bóc tách thành công thông tin từ mã QR!")
-            else:
-                st.warning("⚠️ Đã đọc được mã QR nhưng cấu trúc dữ liệu không chính xác định dạng CCCD.")
+            st.success("🎉 Đã quét và bóc tách thành công thông tin từ mã QR!")
         except Exception as e:
-            st.error(f"❌ Lỗi khi bóc tách dữ liệu: {e}")
+            st.error("Không thể đọc định dạng mã QR này.")
     else:
-        st.error("❌ Không thể đọc được mã QR trong ảnh. Vui lòng kiểm tra lại ảnh (chụp rõ nét, đủ ánh sáng) hoặc nhập tay bên dưới.")
+        st.warning("Chưa tìm thấy mã QR trong ảnh. Vui lòng thử chụp lại rõ hơn.")
 
-st.markdown("---")
-st.subheader("Bước 2: Xác nhận và bổ sung thông tin")
+st.subheader("📌 Kiểm tra & Bổ sung thông tin")
 
-with st.form("info_form"):
-    col1, col2 = st.columns(2)
+col1, col2 = st.columns(2)
+with col1:
+    ho_ten = st.text_input("Họ và tên", value=extracted_data['HO_TEN'])
+    so_cccd = st.text_input("Số CCCD", value=extracted_data['SO_CCCD'])
+    ngay_sinh = st.text_input("Ngày sinh (DD/MM/YYYY)", value=extracted_data['NGAY_SINH'])
+    gioi_tinh = st.selectbox("Giới tính", ["Nam", "Nữ"], index=0 if extracted_data['GIOI_TINH'] == "Nam" else 1)
 
-    with col1:
-        ho_ten = st.text_input("Họ và Tên (Từ QR)", value=extracted_data.get('HO_TEN', ''))
-        so_cccd = st.text_input("Số Căn Cước Công Dân (Từ QR)", value=extracted_data.get('SO_CCCD', ''))
-        ngay_sinh = st.text_input("Ngày Sinh (DD/MM/YYYY)", value=extracted_data.get('NGAY_SINH', ''))
-        ngay_cap = st.text_input("Ngày Cấp CCCD", value=extracted_data.get('NGAY_CAP', ''))
+with col2:
+    dia_chi = st.text_input("Nơi thường trú / Địa chỉ", value=extracted_data['DIA_CHI'])
+    ngay_cap = st.text_input("Ngày cấp CCCD", value=extracted_data['NGAY_CAP'])
 
-    with col2:
-        # Chọn giới tính
-        gioi_tinh_default = extracted_data.get('GIOI_TINH', 'Nam')
-        index_gt = 0 if gioi_tinh_default == 'Nam' else 1
-        gioi_tinh = st.selectbox("Giới Tính (Từ QR)", ["Nam", "Nữ"], index=index_gt)
+if st.button("🚀 Xuất file Sơ Yếu Lý Lịch (.docx)"):
+    try:
+        doc = Document("mau_so_yeu_ly_lich.docx")
 
-        dia_chi = st.text_area("Hộ Khẩu Thường Trú / Địa Chỉ (Từ QR)", value=extracted_data.get('DIA_CHI', ''), height=108)
+        replacements = {
+            "{{ HO_TEN }}": ho_ten,
+            "{{ SO_CCCD }}": so_cccd,
+            "{{ NGAY_SINH }}": ngay_sinh,
+            "{{ GIOI_TINH }}": gioi_tinh,
+            "{{ DIA_CHI }}": dia_chi,
+            "{{ NGAY_CAP }}": ngay_cap,
+        }
 
-    submitted = st.form_submit_button("🚀 Xuất File Sơ Yếu Lý Lịch (.docx)")
+        for p in doc.paragraphs:
+            for key, val in replacements.items():
+                if key in p.text:
+                    p.text = p.text.replace(key, val)
 
-if submitted:
-    if not ho_ten or not so_cccd:
-        st.warning("⚠️ Vui lòng điền tối thiểu Họ tên và Số CCCD.")
-    else:
-        try:
-            doc = DocxTemplate("mau_so_yeu_ly_lich.docx")
-            context = {
-                'HO_TEN': ho_ten,
-                'SO_CCCD': so_cccd,
-                'NGAY_SINH': ngay_sinh,
-                'GIOI_TINH': gioi_tinh,
-                'DIA_CHI': dia_chi,
-                'NGAY_CAP': ngay_cap
-            }
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for p in cell.paragraphs:
+                        for key, val in replacements.items():
+                            if key in p.text:
+                                p.text = p.text.replace(key, val)
 
-            doc.render(context)
+        bio = io.BytesIO()
+        doc.save(bio)
+        bio.seek(0)
 
-            output_file = io.BytesIO()
-            doc.save(output_file)
-            output_file.seek(0)
-
-            st.download_button(
-                label="📥 Tải file DOCX đã điền về máy",
-                data=output_file,
-                file_name=f"So_Yeu_Ly_Lich_{ho_ten}.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            )
-        except Exception as e:
-            st.error(f"❌ Lỗi khi tạo file Word: {e}")
+        st.download_button(
+            label="📥 Tải file Word về máy",
+            data=bio,
+            file_name=f"So_Yeu_Ly_Lich_{ho_ten}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+    except Exception as e:
+        st.error(f"Lỗi khi xuất file: {e}")
