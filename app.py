@@ -41,7 +41,10 @@ if uploaded_file is not None:
     if barcodes:
         try:
             # Lấy chuỗi dữ liệu mã QR (định dạng UTF-8)
-            data_string = barcodes[0].data.decode("utf-8")
+            try:
+                data_string = barcodes[0].data.decode('shift-jis').encode('sjis').decode('utf-8')
+            except:
+                data_string = barcodes[0].data.decode('utf-8', errors='ignore')
             parts = data_string.split('|')
 
             if len(parts) >= 6:
