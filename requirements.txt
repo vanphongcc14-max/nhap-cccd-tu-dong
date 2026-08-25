@@ -1,6 +1,7 @@
 streamlit
 opencv-python-headless
-zxing-cpp
-pyzbar
+easyocr
 pillow
 pandas
+torch
+torchvision
