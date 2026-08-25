@@ -2,6 +2,5 @@ streamlit
 opencv-python-headless
 zxing-cpp
 pyzbar
-python-docx
-docxtpl
 pillow
+pandas
