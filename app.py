@@ -1,18 +1,17 @@
 import streamlit as st
 import numpy as np
 import cv2
-import zxingcpp
 import pandas as pd
+import re
 import os
 import json
-from PIL import Image
-from pyzbar.pyzbar import decode as pyzbar_decode
+from PIL import Image, ImageOps
 
-st.set_page_config(page_title="Quét CCCD Hàng Loạt", page_icon="🪪", layout="wide")
+st.set_page_config(page_title="Đọc & Lưu Văn Bản Giấy Tờ", page_icon="📄", layout="wide")
 
 DB_FILE = "data_list.json"
 
-# Hàm đọc danh sách dữ liệu dùng chung
+# Hàm đọc/lưu dữ liệu dùng chung cho Mobile & PC
 def load_data():
     if os.path.exists(DB_FILE):
         try:
@@ -22,129 +21,126 @@ def load_data():
             return []
     return []
 
-# Hàm lưu danh sách dữ liệu dùng chung
 def save_data(data):
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# Khởi tạo dữ liệu
 data_list = load_data()
 
-# Hàm giải mã tiếng Việt chuẩn từ QR CCCD
-def decode_vietnamese(raw_bytes):
-    try:
-        return raw_bytes.decode('utf-8')
-    except Exception:
-        try:
-            return raw_bytes.decode('latin1').encode('raw_unicode_escape').decode('utf-8')
-        except Exception:
-            return raw_bytes.decode('utf-8', errors='ignore')
+# Dùng Tesseract OCR đọc chữ từ ảnh
+try:
+    import pytesseract
+except ImportError:
+    pytesseract = None
 
-# Hàm quét QR
-def scan_qr_code(img_np):
-    results = zxingcpp.read_barcodes(img_np)
-    if results:
-        return results[0].text
-
-    pyz_res = pyzbar_decode(img_np)
-    if pyz_res:
-        return decode_vietnamese(pyz_res[0].data)
-
-    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-    results = zxingcpp.read_barcodes(gray)
-    if results:
-        return results[0].text
+def extract_text_from_image(img):
+    # Tự động xoay ảnh đúng chiều nếu ảnh bị ngược từ điện thoại
+    img = ImageOps.exif_transpose(img)
+    img_gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
     
-    pyz_res = pyzbar_decode(gray)
-    if pyz_res:
-        return decode_vietnamese(pyz_res[0].data)
+    # Tăng độ tương phản
+    _, thresh = cv2.threshold(img_gray, 150, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    resized = cv2.resize(gray, (0, 0), fx=2, fy=2)
-    results = zxingcpp.read_barcodes(resized)
-    if results:
-        return results[0].text
+    if pytesseract:
+        try:
+            text = pytesseract.image_to_string(thresh, lang='vie+eng')
+            return text
+        except Exception:
+            text = pytesseract.image_to_string(thresh)
+            return text
+    return ""
 
-    pyz_res = pyzbar_decode(resized)
-    if pyz_res:
-        return decode_vietnamese(pyz_res[0].data)
+st.title("📄 CHỤP & BÓC TÁCH THÔNG TIN VĂN BẢN HÀNG LOẠT")
 
-    return None
-
-st.title("🪪 QUÉT CCCD HÀNG LOẠT (LƯU DANH SÁCH)")
-
-# Tạo 2 Cột giao diện (Cột 1: Chụp/Tải - Cột 2: Danh sách)
 col1, col2 = st.columns([1, 1])
 
 with col1:
-    st.subheader("📸 1. Chụp / Tải ảnh CCCD")
+    st.subheader("📸 1. Chụp văn bản / Hợp đồng")
+    
+    # Cho phép xoay ảnh nếu ảnh chụp bị ngược
+    rotate_angle = st.selectbox("Xoay chiều ảnh (nếu bị ngược):", [0, 90, 180, 270], index=0)
+    
     source_choice = st.radio("Nguồn ảnh:", ["📷 Chụp trực tiếp", "📁 Tải ảnh"], horizontal=True)
 
     img_file = None
     if source_choice == "📷 Chụp trực tiếp":
-        img_file = st.camera_input("Chụp mặt trước CCCD")
+        img_file = st.camera_input("Chụp trang văn bản")
     else:
-        img_file = st.file_uploader("Chọn ảnh CCCD", type=["jpg", "jpeg", "png"])
+        img_file = st.file_uploader("Chọn ảnh văn bản từ thiết bị", type=["jpg", "jpeg", "png"])
 
     if img_file is not None:
         image = Image.open(img_file)
-        img_array = np.array(image)
+        
+        # Xoay ảnh theo góc người dùng chọn nếu ảnh bị ngược
+        if rotate_angle != 0:
+            image = image.rotate(-rotate_angle, expand=True)
 
-        if st.button("➕ Thêm vào danh sách", type="primary"):
-            qr_text = scan_qr_code(img_array)
-            if qr_text:
-                fields = qr_text.split("|")
-                if len(fields) >= 6:
+        st.image(image, caption="Ảnh xem trước (Đã căn chỉnh)", use_column_width=True)
+
+        # Bóc tách thủ công / tự động
+        st.write("---")
+        st.markdown("**Trích xuất / Nhập thông tin từ văn bản:**")
+        
+        # Thử đọc tự động bằng OCR
+        raw_text = ""
+        if st.button("🔍 Đọc chữ tự động từ văn bản (OCR)"):
+            with st.spinner("Đang xử lý đọc chữ..."):
+                raw_text = extract_text_from_image(image)
+                st.success("Đã đọc xong văn bản!")
+
+        # Tìm các số CCCD/CMND có trong đoạn văn bản
+        found_cccds = re.findall(r'\b\d{9,12}\b', raw_text)
+        default_cccd = found_cccds[0] if found_cccds else ""
+
+        with st.form("add_form"):
+            ten = st.text_input("Họ và tên (Bên A / Bên B / Người liên quan):")
+            cccd = st.text_input("Số CCCD / CMND:", value=default_cccd)
+            diachi = st.text_area("Nơi cư trú / Địa chỉ:")
+            noidung = st.text_area("Ghi chú / Trích yếu văn bản:", value=raw_text[:200] if raw_text else "")
+
+            submit = st.form_submit_button("➕ Thêm vào danh sách tổng hợp", type="primary")
+
+            if submit:
+                if ten or cccd or diachi:
                     item = {
-                        "Số CCCD": fields[0].strip(),
-                        "Họ và tên": fields[2].strip(),
-                        "Ngày sinh": f"{fields[3][:2]}/{fields[3][2:4]}/{fields[3][4:]}" if len(fields[3])==8 else fields[3],
-                        "Giới tính": fields[4].strip(),
-                        "Địa chỉ": fields[5].strip()
+                        "Họ và tên": ten if ten else "Không ghi",
+                        "Số CCCD": cccd if cccd else "Không ghi",
+                        "Địa chỉ": diachi if diachi else "Không ghi",
+                        "Nội dung văn bản": noidung
                     }
-                    
-                    # Kiểm tra trùng lặp
-                    if not any(d['Số CCCD'] == item['Số CCCD'] for d in data_list):
-                        data_list.append(item)
-                        save_data(data_list)
-                        st.success(f"✅ Đã thêm: {item['Họ và tên']}")
-                        st.rerun()
-                    else:
-                        st.warning("⚠️ CCCD này đã có trong danh sách!")
+                    data_list.append(item)
+                    save_data(data_list)
+                    st.success(f"✅ Đã lưu hồ sơ của: {item['Họ và tên']}")
+                    st.rerun()
                 else:
-                    st.error("QR không đúng định dạng CCCD.")
-            else:
-                st.error("Không tìm thấy mã QR trên ảnh.")
+                    st.warning("Vui lòng nhập ít nhất Họ tên hoặc Số CCCD.")
 
 with col2:
-    st.subheader(f"📋 2. Danh sách đã quét ({len(data_list)} hồ sơ)")
+    st.subheader(f"📋 2. Danh sách tổng hợp ({len(data_list)} văn bản)")
     
-    if st.button("🔄 Cập nhật danh sách mới nhất"):
+    if st.button("🔄 Cập nhật danh sách (Xem từ PC)"):
         st.rerun()
 
     if data_list:
-        # Bảng tổng hợp tất cả hồ sơ
         df = pd.DataFrame(data_list)
-        st.dataframe(df[["Số CCCD", "Họ và tên", "Địa chỉ"]], use_container_width=True)
+        st.dataframe(df[["Họ và tên", "Số CCCD", "Địa chỉ"]], use_container_width=True)
 
         st.write("---")
-        st.write("🔍 **Xem chi tiết / Chọn hồ sơ:**")
+        st.write("🔍 **Xem chi tiết từng văn bản đã chụp:**")
         
-        # Menu chọn từng người trong danh sách để xem chi tiết
-        options = [f"{i+1}. {item['Họ và tên']} - {item['Số CCCD']}" for i, item in enumerate(data_list)]
-        selected_option = st.selectbox("Chọn người muốn xem:", options)
+        options = [f"{i+1}. {item['Họ và tên']} - CCCD: {item['Số CCCD']}" for i, item in enumerate(data_list)]
+        selected_option = st.selectbox("Chọn hồ sơ muốn xem:", options)
 
         if selected_option:
             idx = int(selected_option.split(".")[0]) - 1
             selected_person = data_list[idx]
 
-            # Hiển thị thông tin chi tiết dưới dạng bảng
-            st.info(f"**Thông tin chi tiết của: {selected_person['Họ và tên']}**")
-            detail_df = pd.DataFrame(list(selected_person.items()), columns=["Mục", "Nội dung"])
+            st.info(f"**Chi tiết văn bản của: {selected_person['Họ và tên']}**")
+            detail_df = pd.DataFrame(list(selected_person.items()), columns=["Mục thông tin", "Nội dung"])
             st.table(detail_df)
 
-        # Nút xóa tất cả nếu muốn làm lại từ đầu
-        if st.button("🗑️ Xóa toàn bộ danh sách", type="secondary"):
+        if st.button("🗑️ Xóa toàn bộ danh sách"):
             save_data([])
             st.rerun()
     else:
-        st.info("Chưa có dữ liệu nào. Hãy chụp ảnh từ điện thoại để thêm vào danh sách.")
+        st.info("Chưa có dữ liệu. Hãy chụp văn bản từ điện thoại để lưu vào bảng.")
